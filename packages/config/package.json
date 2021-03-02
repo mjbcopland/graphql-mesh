@@ -24,6 +24,7 @@
     "@graphql-tools/utils": "7.6.0",
     "@graphql-tools/load": "6.2.7",
     "@graphql-tools/code-file-loader": "6.3.1",
+    "@graphql-tools/delegate": "7.0.10",
     "@graphql-tools/graphql-file-loader": "6.2.7",
     "graphql-subscriptions": "1.2.1",
     "param-case": "3.0.4",
