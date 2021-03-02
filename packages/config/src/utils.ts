@@ -1,7 +1,7 @@
 import { parse } from 'graphql';
 import { MeshHandlerLibrary, KeyValueCache, YamlConfig, MergerFn, ImportFn, MeshPubSub } from '@graphql-mesh/types';
 import { resolve } from 'path';
-import { IResolvers, printSchemaWithDirectives } from '@graphql-tools/utils';
+import { IResolvers, getResponseKeyFromInfo, printSchemaWithDirectives } from '@graphql-tools/utils';
 import { paramCase } from 'param-case';
 import { loadTypedefs } from '@graphql-tools/load';
 import { GraphQLFileLoader } from '@graphql-tools/graphql-file-loader';
@@ -12,6 +12,7 @@ import { PubSub, withFilter } from 'graphql-subscriptions';
 import { EventEmitter } from 'events';
 import { CodeFileLoader } from '@graphql-tools/code-file-loader';
 import StitchingMerger from '@graphql-mesh/merger-stitching';
+import { getSubschema, getUnpathedErrors, isExternalObject, resolveExternalValue } from '@graphql-tools/delegate';
 
 export async function getPackage<T>(name: string, type: string, importFn: ImportFn): Promise<T> {
   const casedName = paramCase(name);
@@ -115,11 +116,9 @@ export async function resolveAdditionalResolvers(
                     return additionalResolver.filterBy ? eval(additionalResolver.filterBy) : true;
                   }
                 ),
-                resolve: (payload: any) => {
-                  if (additionalResolver.returnData) {
-                    return get(payload, additionalResolver.returnData);
-                  }
-                  return payload;
+                resolve: (payload: any, args: any, context: any, info: any) => {
+                  const resolverArgs = { returnData: additionalResolver.returnData };
+                  return resolveReturnData(payload, resolverArgs, context, info);
                 },
               },
             },
@@ -143,7 +142,8 @@ export async function resolveAdditionalResolvers(
                       depth: additionalResolver.resultDepth,
                     }
                   );
-                  return additionalResolver.returnData ? get(result, additionalResolver.returnData) : result;
+                  const resolverArgs = { returnData: additionalResolver.returnData };
+                  return resolveReturnData(result, resolverArgs, context, info);
                 },
               },
             },
@@ -154,6 +154,16 @@ export async function resolveAdditionalResolvers(
   );
 
   return mergeResolvers(loadedResolvers);
+}
+
+function resolveReturnData(source: any, args: any, context: any, info: any) {
+  const result = source instanceof Error || !args.returnData ? source : get(source, args.returnData);
+  if (!isExternalObject(source) || isExternalObject(result)) return result;
+
+  const errors = getUnpathedErrors(source);
+  const responseKey = getResponseKeyFromInfo(info);
+  const subschema = getSubschema(source, responseKey);
+  return resolveExternalValue(result, errors, subschema, context, info);
 }
 
 export async function resolveCache(
