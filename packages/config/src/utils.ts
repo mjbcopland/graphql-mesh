@@ -1,11 +1,19 @@
 import { GraphQLError, GraphQLFieldResolver, parse } from 'graphql';
-import { MeshHandlerLibrary, KeyValueCache, YamlConfig, MergerFn, ImportFn, MeshPubSub } from '@graphql-mesh/types';
+import {
+  MeshHandlerLibrary,
+  KeyValueCache,
+  YamlConfig,
+  MergerFn,
+  ImportFn,
+  MeshPubSub,
+  ResolverData,
+} from '@graphql-mesh/types';
 import { resolve, isAbsolute, join } from 'path';
 import { IResolvers, getResponseKeyFromInfo, printSchemaWithDirectives } from '@graphql-tools/utils';
 import { paramCase } from 'param-case';
 import { loadTypedefs } from '@graphql-tools/load';
 import { GraphQLFileLoader } from '@graphql-tools/graphql-file-loader';
-import { get, set, kebabCase } from 'lodash';
+import { get, set, kebabCase, isFunction, reduce, head, castArray } from 'lodash';
 import { stringInterpolator, pathExists, readJSON } from '@graphql-mesh/utils';
 import { mergeResolvers } from '@graphql-tools/merge';
 import { PubSub, withFilter } from 'graphql-subscriptions';
@@ -130,20 +138,23 @@ export async function resolveAdditionalResolvers(
                 selectionSet: additionalResolver.requiredSelectionSet,
                 resolve: async (root: any, args: any, context: any, info: any) => {
                   const resolverData = { root, args, context, info };
-                  const methodArgs: any = {};
-                  for (const argPath in additionalResolver.args) {
-                    set(methodArgs, argPath, stringInterpolator.parse(additionalResolver.args[argPath], resolverData));
-                  }
-                  const result = await context[additionalResolver.targetSource].api[additionalResolver.targetMethod](
-                    methodArgs,
-                    {
-                      selectedFields: additionalResolver.resultSelectedFields,
-                      selectionSet: additionalResolver.resultSelectionSet,
-                      depth: additionalResolver.resultDepth,
-                    }
-                  );
-                  const resolverArgs = { returnData: additionalResolver.returnData };
-                  return resolveReturnData(result, resolverArgs, context, info);
+                  const methodArgs = normalizeMethodArgs(additionalResolver.args, resolverData);
+
+                  const promises = castArray(methodArgs).map(async methodArgs => {
+                    const result = await context[additionalResolver.targetSource].api[additionalResolver.targetMethod](
+                      methodArgs,
+                      {
+                        selectedFields: additionalResolver.resultSelectedFields,
+                        selectionSet: additionalResolver.resultSelectionSet,
+                        depth: additionalResolver.resultDepth,
+                      }
+                    );
+                    const resolverArgs = { returnData: additionalResolver.returnData };
+                    return resolveReturnData(result, resolverArgs, context, info);
+                  });
+
+                  const results = await Promise.all(promises);
+                  return Array.isArray(methodArgs) ? results : head(results);
                 },
               },
             },
@@ -154,6 +165,15 @@ export async function resolveAdditionalResolvers(
   );
 
   return mergeResolvers(loadedResolvers);
+}
+
+type ArgsConfig<T> = YamlConfig.AdditionalStitchingResolverObject['args'] | ((resolverData: ResolverData) => T);
+function normalizeMethodArgs<T extends Record<string, unknown>>(args: ArgsConfig<T>, resolverData: ResolverData): T {
+  function reducer(object: T, template: string, path: string) {
+    return set(object, path, stringInterpolator.parse(template, resolverData));
+  }
+
+  return isFunction(args) ? args(resolverData) : reduce(args, reducer, Object.create(null));
 }
 
 const isGraphQLError = (error: unknown): error is GraphQLError => error instanceof GraphQLError;
