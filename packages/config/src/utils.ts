@@ -1,4 +1,4 @@
-import { parse } from 'graphql';
+import { GraphQLError, GraphQLFieldResolver, parse } from 'graphql';
 import { MeshHandlerLibrary, KeyValueCache, YamlConfig, MergerFn, ImportFn, MeshPubSub } from '@graphql-mesh/types';
 import { resolve, isAbsolute, join } from 'path';
 import { IResolvers, getResponseKeyFromInfo, printSchemaWithDirectives } from '@graphql-tools/utils';
@@ -156,15 +156,20 @@ export async function resolveAdditionalResolvers(
   return mergeResolvers(loadedResolvers);
 }
 
-function resolveReturnData(source: any, args: any, context: any, info: any) {
-  const result = source instanceof Error || !args.returnData ? source : get(source, args.returnData);
-  if (!isExternalObject(source) || isExternalObject(result)) return result;
+const isGraphQLError = (error: unknown): error is GraphQLError => error instanceof GraphQLError;
+
+const resolveReturnData: GraphQLFieldResolver<unknown, unknown> = (source, args, context, info) => {
+  const result: unknown = source instanceof Error || !args.returnData ? source : get(source, args.returnData);
+
+  if (isGraphQLError(result)) return result.originalError;
+  if (isExternalObject(result) || !isExternalObject(source)) return result;
 
   const errors = getUnpathedErrors(source);
   const responseKey = getResponseKeyFromInfo(info);
   const subschema = getSubschema(source, responseKey);
+
   return resolveExternalValue(result, errors, subschema, context, info);
-}
+};
 
 export async function resolveCache(
   cacheConfig: YamlConfig.Config['cache'],
