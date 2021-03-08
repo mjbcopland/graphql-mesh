@@ -1,4 +1,4 @@
-import { GraphQLError, GraphQLFieldResolver, parse } from 'graphql';
+import { getNullableType, GraphQLError, GraphQLFieldResolver, GraphQLOutputType, parse } from 'graphql';
 import {
   MeshHandlerLibrary,
   KeyValueCache,
@@ -137,8 +137,12 @@ export async function resolveAdditionalResolvers(
               [additionalResolver.field]: {
                 selectionSet: additionalResolver.requiredSelectionSet,
                 resolve: async (root: any, args: any, context: any, info: any) => {
+                  const resolverArgs = { returnData: additionalResolver.returnData };
                   const resolverData = { root, args, context, info };
                   const methodArgs = normalizeMethodArgs(additionalResolver.args, resolverData);
+
+                  const outputType = getNullableType(info.returnType);
+                  const returnType = Array.isArray(methodArgs) ? outputType.ofType : outputType;
 
                   const promises = castArray(methodArgs).map(async methodArgs => {
                     const result = await context[additionalResolver.targetSource].api[additionalResolver.targetMethod](
@@ -149,8 +153,8 @@ export async function resolveAdditionalResolvers(
                         depth: additionalResolver.resultDepth,
                       }
                     );
-                    const resolverArgs = { returnData: additionalResolver.returnData };
-                    return resolveReturnData(result, resolverArgs, context, info);
+                    if (result instanceof Error) return null;
+                    return resolveReturnData(result, resolverArgs, context, info, returnType);
                   });
 
                   const results = await Promise.all(promises);
@@ -178,7 +182,10 @@ function normalizeMethodArgs<T extends Record<string, unknown>>(args: ArgsConfig
 
 const isGraphQLError = (error: unknown): error is GraphQLError => error instanceof GraphQLError;
 
-const resolveReturnData: GraphQLFieldResolver<unknown, unknown> = (source, args, context, info) => {
+type FieldResolverParams = Parameters<GraphQLFieldResolver<unknown, unknown>>;
+type ReturnDataParams = [...params: FieldResolverParams, returnType?: GraphQLOutputType, skipTypeMerging?: boolean];
+
+const resolveReturnData: (...params: ReturnDataParams) => any = (source, args, context, info, ...rest) => {
   const result: unknown = source instanceof Error || !args.returnData ? source : get(source, args.returnData);
 
   if (isGraphQLError(result)) return result.originalError;
@@ -188,7 +195,7 @@ const resolveReturnData: GraphQLFieldResolver<unknown, unknown> = (source, args,
   const responseKey = getResponseKeyFromInfo(info);
   const subschema = getSubschema(source, responseKey);
 
-  return resolveExternalValue(result, errors, subschema, context, info);
+  return resolveExternalValue(result, errors, subschema, context, info, ...rest);
 };
 
 export async function resolveCache(
