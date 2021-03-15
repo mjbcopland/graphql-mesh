@@ -49,6 +49,11 @@ const NAMING_CONVENTIONS: Record<NamingConventionType, NamingConventionFn> = {
   lowerCase,
 };
 
+/** Applies a renamer function to a string argument, ignoring any leading underscores. */
+function rename(name: string, renamer: (name: string) => string): string {
+  return name.replace(/^(_*)(.*)$/, (match, prefix, suffix) => prefix + renamer(suffix));
+}
+
 export default class NamingConventionTransform implements MeshTransform {
   private transforms: Transform[] = [];
 
@@ -56,17 +61,17 @@ export default class NamingConventionTransform implements MeshTransform {
     if (options.config.typeNames) {
       const namingConventionFn = NAMING_CONVENTIONS[options.config.typeNames];
       this.transforms.push(
-        new RenameTypes(typeName => namingConventionFn(typeName)),
-        new RenameRootTypes(typeName => namingConventionFn(typeName))
+        new RenameTypes(typeName => rename(typeName, namingConventionFn)),
+        new RenameRootTypes(typeName => rename(typeName, namingConventionFn))
       );
     }
     if (options.config.fieldNames) {
       const namingConventionFn = NAMING_CONVENTIONS[options.config.fieldNames];
       this.transforms.push(
-        new RenameObjectFields((_, fieldName) => namingConventionFn(fieldName)),
-        new RenameRootFields((_, fieldName) => namingConventionFn(fieldName)),
-        new RenameInputObjectFields((_, fieldName) => namingConventionFn(fieldName)),
-        new RenameInterfaceFields((_, fieldName) => namingConventionFn(fieldName))
+        new RenameObjectFields((_, fieldName) => rename(fieldName, namingConventionFn)),
+        new RenameRootFields((_, fieldName) => rename(fieldName, namingConventionFn)),
+        new RenameInputObjectFields((_, fieldName) => rename(fieldName, namingConventionFn)),
+        new RenameInterfaceFields((_, fieldName) => rename(fieldName, namingConventionFn))
       );
     }
     if (options.config.enumValues) {
@@ -74,7 +79,7 @@ export default class NamingConventionTransform implements MeshTransform {
 
       this.transforms.push(
         new TransformEnumValues((typeName, externalValue, enumValueConfig) => [
-          namingConventionFn(externalValue),
+          rename(externalValue, namingConventionFn),
           enumValueConfig,
         ])
       );
